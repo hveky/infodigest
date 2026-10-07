@@ -1,6 +1,9 @@
 # 信息聚合 中央配置示例 — 拷贝为 .claude/config.yaml 并按实际填写
 # 凭证（BOT_TOKEN/creds.json）本体不放这里，仅写路径
 
+daily_digest:
+  output_dir: reports/combined
+
 channel_digest:
   channels: []                                  # 留空 = 跑全部 broadcast channel
   output_dir: "C:\\Users\\<YOU>\\reports\\telegram"

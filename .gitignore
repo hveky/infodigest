@@ -43,5 +43,13 @@ _harvest_log.txt
 _out.bin
 _test.json
 
-# Reports — 历史报告内容不入库
+# Reports and Telegram history exports — private content stays local
 reports/
+exports/
+
+# Local tool caches, launch settings and raw harvested content
+.tmp/
+.omo/
+.zcode/
+.claude/launch.json
+xiaoheihe-cli/_bodies*.json
