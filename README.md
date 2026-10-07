@@ -40,7 +40,7 @@ InfoDigest 是一组协同工作的 **Claude Code Skills** + 一个数据层 CLI
 | 模块 | 来源平台 | 做什么 | 触发词 |
 | --- | --- | --- | --- |
 | **forum-research** | LinuxDo（及任意论坛） | 连接已登录浏览器，读新帖+评论，按回复数排序，分类后写结构化调研报告 | 「帮我看看 linuxdo 今天有什么」「社区调研」 |
-| **xiaoheihe-daily-digest** | 小黑盒 · 盒友杂谈 | 抓取热门 Top 60，取正文，合成「今日杂谈」深度观察报告 | 「小黑盒日报」「盒友在聊什么」 |
+| **xiaoheihe-daily-digest** | 小黑盒 · 盒友杂谈 | 默认已登录 Edge 官网 UI/DOM 读取 topic 7214，按实际排序/样本逐条读正文评论；CLI Top 60 仅显式回退 | 「小黑盒日报」「盒友在聊什么」 |
 | **channel-digest** | Telegram 频道 | 汇总订阅频道近 24h 文字消息，落盘四节 Markdown 日报 并由 Bot 推送给你自己 | 「频道日报」「跑 tg digest」 |
 | **daily-digest** | 三来源合刊 | 保留三份全文，生成并仅推送 PDF | 「跑一下今天的」「三合一」「信息聚合日报」 |
 | **`xiaoheihe-cli/xhh.py`** | 小黑盒 | 数据层 CLI，负责小黑盒抓取与排序、凭证管理 | `python xhh.py <command>` |
@@ -67,7 +67,7 @@ InfoDigest 是一组协同工作的 **Claude Code Skills** + 一个数据层 CLI
    跑 tg digest                      # → channel-digest
    ```
 
-4. 小黑盒凭证过期时，运行 `python xiaoheihe-cli/xhh.py setup` 按提示从浏览器 DevTools 重新捕获即可。
+4. 小黑盒默认经 `web-access` 使用已登录 Edge 的自建后台 tab 直接读官网，无需 CLI 凭证。网页智能排序实际 40 篇与 CLI 60 篇热榜不可混称；报告披露滚动停止原因、跨日窗口和图片/未加载评论限制。仅显式使用 CLI 且凭证过期时，运行 `python xiaoheihe-cli/xhh.py setup`。
 
 ## 🔧 环境要求
 
@@ -102,13 +102,13 @@ InfoDigest 是一组协同工作的 **Claude Code Skills** + 一个数据层 CLI
 
 ## 安装与离线构建
 
-Python 3.10+，`python -m pip install -r requirements.txt`。中文字体默认本机 `C:/Windows/Fonts/simhei.ttf`，可用 `--font` 显式指定 TTF；缺失时报错，不下载。配置 `daily_digest.output_dir: reports/combined`，相对仓库根解析；此目录已由 `reports/` 忽略。
+Python 3.10+，`python -m pip install -r requirements.txt`。标题默认本机黑体 `C:/Windows/Fonts/simhei.ttf`，同目录 `simsun.ttc` 可用时正文嵌入宋体；可用 `--font` 显式指定 TTF。验证实际可见 Unicode 字形覆盖，缺失时报错而非静默丢字，不下载字体。配置 `daily_digest.output_dir: reports/combined`，相对仓库根解析；此目录已由 `reports/` 忽略。
 
 ```bash
 python -B scripts/build_digest_pdf.py --date 2030-01-02 --linuxdo /absolute/forum.md --xiaoheihe /absolute/heybox.md --telegram /absolute/telegram.md --output-dir reports/combined
 ```
 
-只接受三个明确 Markdown 路径和一致报头日期，论坛正文 ≥6000、小黑盒 ≥10000、TG ≥6000 中文字符，TG 四节依次为总论/信息内容/传播机制/总结。不会寻找“最新”文件或读取网络资源。标题、引文、列表、代码和表格文字全部保留；表格降级为逐行文本（列以 `|` 分隔），便于长单元格跨页。远程图片不加载，保留替代文字与地址；HTML 不执行，script/style 安全略过。长 URL 可分页，HTTP(S) 原文链接可点击。
+只接受三个明确 Markdown 路径和一致报头日期，论坛正文 ≥6000、小黑盒 ≥10000、TG ≥6000 中文字符，TG 四节依次为总论/信息内容/传播机制/总结。不会寻找“最新”文件或读取网络资源。标题、引文、列表、代码和表格文字全部保留；表格降级为逐行文本（列以 `|` 分隔），便于长单元格跨页。远程图片不加载，保留替代文字与地址；HTML 不执行，script/style 安全略过。长 URL 可分页，HTTP(S) 原文链接可点击。新版采用单栏中文编辑刊物排版，真实目录页码、来源页眉页脚、h1/h2/h3 层级、克制墨色与单一强调色；引用/列表/表格/代码各有独立样式。命名链接保留原标签与完整可点击目标，不重复展开 URL；原文裸网址和全部正文保留。
 
 原子构建，不覆盖成品，同日自动 `_2`、`_3`。每份 PDF 配套 `.manifest.json`，记录三个显式源路径、日期、中文字符数和 SHA-256、PDF 哈希，无凭证。缺源/质量失败不发布完整合刊。恢复只补失败来源，复用原路径；成品恢复可在原构建命令添加 `--resume /absolute/file.manifest.json`，内容或日期变更会拒绝。
 

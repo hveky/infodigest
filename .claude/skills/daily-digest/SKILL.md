@@ -23,6 +23,7 @@ description: 默认三合一信息聚合日报。用户说“三合一”“信�
    ```bash
    python -B "<repo>/scripts/build_digest_pdf.py" --date YYYY-MM-DD --linuxdo "<本轮论坛.md>" --xiaoheihe "<本轮小黑盒.md>" --telegram "<本轮TG.md>" --output-dir "<合刊目录>" --font "C:/Windows/Fonts/simhei.ttf"
    ```
+   排版为单栏中文编辑刊物：精简封面、可点击真实页码目录、黑体分级标题、宋体长文正文（同目录本地 `simsun.ttc` 可用时），墨色与单一强调色、来源页眉与页脚、区别引用/列表/表格/代码。命名链接不额外展开完整 URL，原标签与完整目标注释保留；原文裸网址、代码空格、编号和所有正文不得删减。脚本验证本地字体真实中文字形覆盖，不下载字体或启动浏览器服务。
    脚本拒绝缺源、空源、非 Markdown、日期不符、字数/四节不合格与不存在字体；不下载字体。输出不覆盖，同日使用 `_2`、`_3`。记录 `.manifest.json`，含三个显式源路径、日期、中文字符数、SHA-256 和 PDF 哈希，无凭证。
 6. 使用 pypdf/PyMuPDF 验证中文可提取、三章首尾正文、封面目录真实页码、嵌入中文字体、分页、书签和原文链接；渲染代表页检查，不启动浏览器服务器。失败不推送。
 7. 仅明确调用独立推送脚本，复用 `channel_digest.push.enabled` 和 `caption_with_title`，只发送一个合刊 PDF：

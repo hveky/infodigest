@@ -40,7 +40,7 @@ InfoDigest is a set of cooperating **Claude Code Skills** plus a data-layer CLI:
 | Module | Source | What it does | Triggers |
 | --- | --- | --- | --- |
 | **forum-research** | LinuxDo (any forum) | Connects to your logged-in browser, reads new posts + comments, ranks by replies, writes a structured research report | "see what's on linux.do today", "community research" |
-| **xiaoheihe-daily-digest** | Heybox · 盒友杂谈 | Harvests the top 60 hot posts, fetches bodies, synthesizes a deep daily observation report | "Heybox digest", "what are gamers discussing" |
+| **xiaoheihe-daily-digest** | Heybox · 盒友杂谈 | Reads topic 7214 directly through logged-in Edge UI/DOM, with the actual ordering and sample; CLI top 60 is an explicit optional fallback | "Heybox digest", "what are gamers discussing" |
 | **channel-digest** | Telegram channels | Summarizes subscribed channels' last 24h into a newspaper-style HTML report, pushed to you via Bot | "channel digest", "run tg digest" |
 | **`xiaoheihe-cli/xhh.py`** | Heybox | Data-layer CLI: scraping, ranking, credential management | `python xhh.py <command>` |
 
@@ -66,7 +66,7 @@ InfoDigest is a set of cooperating **Claude Code Skills** plus a data-layer CLI:
    run tg digest                     # → channel-digest
    ```
 
-4. When Heybox credentials expire, run `python xiaoheihe-cli/xhh.py setup` and recapture from your browser's DevTools as prompted.
+4. Heybox defaults to an agent-owned background tab in logged-in Edge via `web-access`; no CLI credentials are required. A website smart-order sample of 40 posts is not a CLI top-60 hot ranking. Reports disclose scroll convergence, cross-day timestamps, and unread image/collapsed comments. Only explicitly selected CLI workflows need `python xiaoheihe-cli/xhh.py setup` when credentials expire.
 
 ## 🔧 Requirements
 

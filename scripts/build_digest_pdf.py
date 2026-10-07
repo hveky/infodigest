@@ -159,13 +159,15 @@ class TextBlocks(HTMLParser):
         self.parts = []
         self.links = []
         self.heading = False
+        self.kind = "body"
+        self.quote_depth = 0
         self.ignored = 0
         self.pre = False
         self.lists = []
 
     def flush(self):
         if self.parts:
-            self.blocks.append(("".join(self.parts), self.heading))
+            self.blocks.append(("".join(self.parts), self.kind))
             self.parts = []
 
     def handle_starttag(self, tag, attrs):
@@ -194,6 +196,25 @@ class TextBlocks(HTMLParser):
         }:
             self.flush()
             self.heading = tag.startswith("h") and tag[1:].isdigit()
+            if tag == "blockquote":
+                self.quote_depth += 1
+            self.kind = (
+                tag
+                if self.heading
+                else (
+                    "code"
+                    if tag == "pre"
+                    else (
+                        "table"
+                        if tag == "tr"
+                        else (
+                            "list"
+                            if tag == "li"
+                            else "quote" if self.quote_depth else "body"
+                        )
+                    )
+                )
+            )
         if tag == "li":
             prefix = "•"
             if self.lists and self.lists[-1][0] == "ol":
@@ -228,12 +249,17 @@ class TextBlocks(HTMLParser):
             self.flush()
             if self.lists:
                 self.lists.pop()
+        if tag == "blockquote":
+            self.flush()
+            self.quote_depth = max(0, self.quote_depth - 1)
         if tag == "pre":
             self.pre = False
         if tag == "a" and self.links:
             url = self.links.pop()
             if url:
-                self.parts.append("</link> " + escape(url))
+                # The original link label is retained, the full target lives in
+                # the PDF annotation rather than being duplicated into prose.
+                self.parts.append("</link>")
         if tag in {"td", "th"}:
             self.parts.append(" | ")
         if tag in {"p", "li", "pre", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
@@ -251,71 +277,77 @@ class TextBlocks(HTMLParser):
         self.parts.append(safe.replace("\n", "<br/>"))
 
 
+class VisibleText(HTMLParser):
+    """Extract visible labels from the safe ReportLab paragraph markup."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.text = []
+
+    def handle_data(self, data):
+        self.text.append(data)
+
+
+INK = colors.HexColor("#242b2a")
+MUTED = colors.HexColor("#68716e")
+ACCENT = colors.HexColor("#286657")
+RULE = colors.HexColor("#d5ded9")
+PAPER = colors.HexColor("#f4f5f1")
+
+
 class DigestDoc(BaseDocTemplate):
+    def beforeDocument(self):
+        self.current_source = "阅读目录"
+
     def afterFlowable(self, flowable):
         if hasattr(flowable, "chapter_key"):
             key, title = flowable.chapter_key
+            self.current_source = title
             self.canv.bookmarkPage(key)
             self.canv.addOutlineEntry(title, key, 0)
             self.notify("TOCEntry", (0, title, self.page, key))
 
 
 def footer(canvas, doc):
+    canvas.saveState()
+    if doc.page == 1:
+        canvas.setFillColor(PAPER)
+        canvas.rect(0, 0, *A4, fill=1, stroke=0)
+        canvas.setFillColor(ACCENT)
+        canvas.rect(54, A4[1] - 110, 46, 4, fill=1, stroke=0)
+    else:
+        canvas.setStrokeColor(RULE)
+        canvas.setLineWidth(0.5)
+        canvas.line(54, A4[1] - 45, A4[0] - 54, A4[1] - 45)
+        canvas.line(54, 43, A4[0] - 54, 43)
+        canvas.setFont("DigestChinese", 8)
+        canvas.setFillColor(MUTED)
+        canvas.drawString(54, A4[1] - 33, "信息聚合日报  /  " + doc.report_date)
+        canvas.drawString(54, 28, "三份全文合刊 · 采集限制以各章原文为准")
+    # Keep the page number isolated for machine-verifiable pagination.
     canvas.setFont("DigestChinese", 9)
-    canvas.drawCentredString(A4[0] / 2, 22, str(doc.page))
+    canvas.setFillColor(MUTED)
+    canvas.drawCentredString(A4[0] / 2, 17, str(doc.page))
+    canvas.restoreState()
 
 
-def render_pdf(path: Path, report_date: str, sources: list[dict], font: Path):
+def register_fonts(font: Path, sources: list[dict]):
+    """Use only local TrueType outlines; verify actual cmap coverage before build."""
     if not font.is_file():
         raise ValueError("Chinese font not found; provide --font")
-    pdfmetrics.registerFont(TTFont("DigestChinese", str(font)))
-    body = ParagraphStyle(
-        "Body",
-        fontName="DigestChinese",
-        fontSize=10,
-        leading=16,
-        wordWrap="CJK",
-        spaceAfter=7,
-        splitLongWords=True,
+    heading_font = TTFont("DigestChinese", str(font))
+    pdfmetrics.registerFont(heading_font)
+    # Windows' SimSun collection contains embeddable TrueType outlines. A custom
+    # font elsewhere remains self-contained rather than unexpectedly selecting it.
+    song = font.parent / "simsun.ttc"
+    body_font = (
+        TTFont("DigestBody", str(song), subfontIndex=0)
+        if song.is_file()
+        else TTFont("DigestBody", str(font))
     )
-    heading = ParagraphStyle(
-        "Heading", parent=body, fontSize=15, leading=22, spaceAfter=12
-    )
-    doc = DigestDoc(
-        str(path),
-        pagesize=A4,
-        leftMargin=45,
-        rightMargin=45,
-        topMargin=45,
-        bottomMargin=40,
-        invariant=1,
-    )
-    doc.addPageTemplates(
-        PageTemplate(
-            id="body",
-            frames=[Frame(45, 40, A4[0] - 90, A4[1] - 85, id="normal")],
-            onPage=footer,
-        )
-    )
-    story = [
-        Spacer(1, 100),
-        Paragraph("信息聚合日报", heading),
-        Paragraph(report_date, heading),
-        Paragraph("三份全文合刊 · Linux.do / 小黑盒 / Telegram", body),
-        Paragraph("各来源采集窗口与样本限制以章节原文为准；不跨来源重写或删减。", body),
-        PageBreak(),
-        Paragraph("目录", heading),
-    ]
-    toc = TableOfContents()
-    toc.levelStyles = [body]
-    story.extend([toc, PageBreak()])
-    for index, source in enumerate(sources):
-        if index:
-            story.append(PageBreak())
-        title = f"第{index+1}章 · {source['title']}"
-        chapter = Paragraph(title, heading)
-        chapter.chapter_key = (f"chapter-{index}", title)
-        story.append(chapter)
+    # Check rendered text, not raw Markdown URLs, scripts or comments. Every
+    # visible Unicode scalar matters (including non-BMP CJK and symbols).
+    for source in sources:
         parser = TextBlocks()
         parser.feed(
             markdown.markdown(
@@ -323,9 +355,222 @@ def render_pdf(path: Path, report_date: str, sources: list[dict], font: Path):
             )
         )
         parser.flush()
-        for text, is_heading in parser.blocks:
-            story.append(Paragraph(text, heading if is_heading else body))
+        for text, kind in parser.blocks:
+            visible = VisibleText()
+            visible.feed(text)
+            candidate = (
+                heading_font if kind.startswith("h") or kind == "code" else body_font
+            )
+            missing = {
+                ord(c)
+                for c in "".join(visible.text)
+                if not c.isspace() and ord(c) not in candidate.face.charToGlyph
+            }
+            if missing:
+                raise ValueError(
+                    "local font missing visible glyphs: "
+                    + " ".join(f"U+{c:04X}" for c in sorted(missing)[:12])
+                )
+    pdfmetrics.registerFont(body_font)
+
+
+def render_pdf(path: Path, report_date: str, sources: list[dict], font: Path):
+    register_fonts(font, sources)
+    body = ParagraphStyle(
+        "Body",
+        fontName="DigestBody",
+        fontSize=10.5,
+        leading=18.5,
+        wordWrap="CJK",
+        spaceAfter=9,
+        textColor=INK,
+        splitLongWords=True,
+        allowWidows=0,
+        allowOrphans=0,
+    )
+    heading = ParagraphStyle(
+        "Heading",
+        parent=body,
+        fontName="DigestChinese",
+        fontSize=22,
+        leading=31,
+        spaceBefore=17,
+        spaceAfter=15,
+        keepWithNext=True,
+    )
+    styles = {"body": body}
+    for level, size, leading in (
+        (1, 19, 28),
+        (2, 15, 23),
+        (3, 12, 20),
+        (4, 11, 19),
+        (5, 10.5, 19),
+        (6, 10.5, 19),
+    ):
+        styles[f"h{level}"] = ParagraphStyle(
+            f"H{level}",
+            parent=heading,
+            fontSize=size,
+            leading=leading,
+            spaceBefore=19 if level < 3 else 13,
+            spaceAfter=10 if level < 3 else 7,
+            textColor=ACCENT if level == 2 else INK,
+        )
+    styles["quote"] = ParagraphStyle(
+        "Quote",
+        parent=body,
+        fontSize=9.5,
+        leading=16.5,
+        textColor=MUTED,
+        leftIndent=13,
+        rightIndent=9,
+        borderColor=RULE,
+        borderWidth=0.5,
+        borderPadding=9,
+        backColor=PAPER,
+        spaceBefore=6,
+        spaceAfter=12,
+    )
+    styles["list"] = ParagraphStyle("List", parent=body, leftIndent=12, spaceAfter=5)
+    styles["table"] = ParagraphStyle(
+        "TableRow",
+        parent=body,
+        fontSize=9,
+        leading=15,
+        backColor=PAPER,
+        borderColor=RULE,
+        borderWidth=0.4,
+        borderPadding=6,
+        leftIndent=7,
+        rightIndent=7,
+        spaceAfter=5,
+    )
+    styles["code"] = ParagraphStyle(
+        "Code",
+        parent=body,
+        fontName="DigestChinese",
+        fontSize=8.2,
+        leading=12.5,
+        backColor=PAPER,
+        borderPadding=8,
+        leftIndent=9,
+        rightIndent=9,
+        spaceBefore=5,
+        spaceAfter=12,
+    )
+    small = ParagraphStyle(
+        "Small",
+        parent=body,
+        fontName="DigestChinese",
+        fontSize=9,
+        leading=16,
+        textColor=MUTED,
+    )
+    cover = ParagraphStyle(
+        "Cover", parent=heading, fontSize=34, leading=48, spaceAfter=20
+    )
+    doc = DigestDoc(
+        str(path),
+        pagesize=A4,
+        leftMargin=54,
+        rightMargin=54,
+        topMargin=64,
+        bottomMargin=57,
+        invariant=1,
+        title=f"信息聚合日报 · {report_date}",
+        author="",
+    )
+    doc.report_date = report_date
+    doc.addPageTemplates(
+        PageTemplate(
+            id="body",
+            frames=[
+                Frame(
+                    54,
+                    57,
+                    A4[0] - 108,
+                    A4[1] - 121,
+                    id="normal",
+                    leftPadding=0,
+                    rightPadding=0,
+                )
+            ],
+            onPage=footer,
+            onPageEnd=source_header,
+        )
+    )
+    story = [
+        Spacer(1, 74),
+        Paragraph("DAILY READING  /  全文合刊", small),
+        Spacer(1, 28),
+        Paragraph("信息聚合<br/>日报", cover),
+        Paragraph(report_date.replace("-", " / "), styles["h2"]),
+        Spacer(1, 32),
+        Paragraph("01　Linux.do<br/>02　小黑盒<br/>03　Telegram", body),
+        Spacer(1, 88),
+        Paragraph("三份独立观察，一册完整阅读。", styles["h3"]),
+        Paragraph(
+            "各来源采集窗口与样本限制以章节原文为准；不跨来源重写或删减。", small
+        ),
+        PageBreak(),
+        Paragraph("阅读目录", heading),
+        Paragraph("按来源保留全文 · 点击章节或使用 PDF 书签跳转", small),
+        Spacer(1, 24),
+    ]
+    toc = TableOfContents()
+    toc.levelStyles = [
+        ParagraphStyle(
+            "TOC",
+            parent=body,
+            fontName="DigestChinese",
+            fontSize=13,
+            leading=23,
+            spaceBefore=18,
+            spaceAfter=18,
+        )
+    ]
+    story.extend(
+        [
+            toc,
+            Spacer(1, 32),
+            Paragraph("阅读说明", styles["h3"]),
+            Paragraph(
+                "三个章节各自保留原文结构与链接。网页智能排序、平台热榜和频道窗口并非统一样本；请结合原文的数据说明阅读。链接文字保持原样，完整目标地址保留在可点击注释中；原文裸网址不删减。",
+                small,
+            ),
+            PageBreak(),
+        ]
+    )
+    for index, source in enumerate(sources):
+        if index:
+            story.append(PageBreak())
+        title = f"第{index+1}章 · {source['title']}"
+        chapter = Paragraph(title, heading)
+        chapter.chapter_key = (f"chapter-{index}", title)
+        story.extend([Paragraph(f"SOURCE 0{index + 1}  /  独立全文", small), chapter])
+        parser = TextBlocks()
+        parser.feed(
+            markdown.markdown(
+                source["text"], extensions=["tables", "fenced_code", "sane_lists"]
+            )
+        )
+        parser.flush()
+        for text, kind in parser.blocks:
+            story.append(Paragraph(text, styles[kind]))
     doc.multiBuild(story, canvasmaker=Canvas)
+
+
+def source_header(canvas, doc):
+    """Write source after layout so a chapter's first page has its own header."""
+    if doc.page <= 1:
+        return
+    canvas.saveState()
+    canvas.setFillColor(colors.white)
+    canvas.rect(A4[0] / 2 + 10, A4[1] - 42, A4[0] / 2 - 64, 15, fill=1, stroke=0)
+    canvas.setFillColor(MUTED)
+    canvas.setFont("DigestChinese", 8)
+    canvas.drawRightString(A4[0] - 54, A4[1] - 33, doc.current_source)
+    canvas.restoreState()
 
 
 def build(

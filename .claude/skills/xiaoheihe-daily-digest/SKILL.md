@@ -7,7 +7,7 @@ description: Use when the user asks for a 小黑盒 or heybox community digest, 
 
 ## Overview
 
-从小黑盒“盒友杂谈”板块获取热帖元数据，使用本机已登录的 Chrome 或 Edge 阅读正文与评论，并生成一份反映社区话题、认知信号和情绪温度的中文深度日报。
+默认使用本机已登录的 Microsoft Edge，经 `web-access` 在自己创建的后台 tab 直接读取小黑盒官网“盒友杂谈”（topic 7214）UI/DOM，逐条阅读正文与评论，再生成中文深度日报。无需先运行 CLI 或刷新 API 凭证；CLI 仅为用户显式选择的可选回退。
 
 **REQUIRED SUB-SKILL:** 在任何联网或浏览器动作之前加载并遵循 `web-access`。
 
@@ -18,7 +18,9 @@ description: Use when the user asks for a 小黑盒 or heybox community digest, 
 - 中央配置：`<repo>/.claude/config.yaml` 的 `xiaoheihe` 段
 - 凭证：`~/.xhh/creds.json`，由 `xhh.py` 管理
 - 默认板块：`topic_id = 7214`
-- 默认样本：热帖 60 篇
+- 默认采集入口：`https://www.xiaoheihe.cn/app/bbs/home`，在官网 UI 选择“盒友杂谈”并确认 topic 7214
+- 网页样本：以当前实际排序、滚动收敛后去重 linkid 数为准；例如智能排序实际 40 篇必须写“网页智能排序 40 篇”，不是“60 篇热榜”
+- CLI 可选样本：显式 `harvest --top 60 --topic 7214`，与网页智能排序不是同一种排序或样本
 
 `xhh.py` 只依赖 Python 标准库。运行时设置 `PYTHONUTF8=1`，避免 Windows 控制台编码破坏中文 JSON。
 
@@ -45,9 +47,21 @@ description: Use when the user asks for a 小黑盒 or heybox community digest, 
 
 `xiaoheihe.auth.creds_file` 仅作文档记录；实际凭证位置以 `xhh.py` 的 `~/.xhh/creds.json` 为准。
 
-### Step 2: Harvest metadata
+### Step 2: 默认直接读取 Edge 官网列表
 
-使用 Git Bash 和脚本绝对路径；不要依赖不支持的 `workdir` 参数，不使用 PowerShell。运行：
+先加载 `web-access`，按其本机 Edge 依赖检查和安全规则创建**自己的后台 tab**；记录并全程复用同一 target ID，不操作或关闭用户原有 tab，结束后只关闭自己创建的 tab。本机 CDP 不使用远程浏览器服务。
+
+1. 导航官网首页，用 UI 选择“盒友杂谈”，确认 topic 7214；以实际页面状态确认“智能排序”等排序，不把默认排序猜作热榜。
+2. 读取当前 DOM 的帖子链接、linkid、标题、可见作者/热度/时间与预览。选择器以现场 DOM 为准；仅保留实际可见且属于目标板块的条目，按 linkid 去重。
+3. 记录采集开始/结束时间（Asia/Shanghai），分段滚动列表，条件等待新增帖子/加载状态消失，再读取 DOM；使用累积去重集合以兼容虚拟列表。
+4. 连续至少两轮滚动没有新增 linkid 且无加载状态，记录“滚动收敛”；若达到明确采样上限、站点限流、登录阻断或无法继续，记录对应原因，不称已读全站。有限安全重试，不无限滚动或固定 sleep。
+5. 固定本轮实际顺序与样本，再复用后台 tab 逐条阅读。不为了凑 60 条混入其他板块或不明排序。
+
+报告数据概览必须分别列出列表候选数、正文可读数、实际读取评论的帖子数、文本评论范围、图片/未加载/不可读数。网页当前列表是采集时刻的可见快照，可能跨日；无明确时间戳和过滤证据，不称“今日全部帖子”或统一 24 小时窗口。隐藏评论、楼中楼、图片评论不得宣称已全文读取。
+
+### 可选显式回退：CLI metadata（不是默认前置条件）
+
+仅用户明确要求 CLI 或明确选择其回退路线时，使用 Git Bash 和脚本绝对路径，不使用 PowerShell：
 
 ```bash
 PYTHONUTF8=1 python -B "<repo>/xiaoheihe-cli/xhh.py" harvest --top 60 --topic 7214
@@ -78,8 +92,7 @@ PYTHONUTF8=1 python -B "<repo>/xiaoheihe-cli/xhh.py" harvest --top 60 --topic 72
 
 失败处理：
 
-- `非法请求`、`non-ok status`、缺少 `/bbs/app/topic/feeds` 模板：停止并提示运行 `python -B xhh.py setup`。
-- 凭证文件缺失：停止并提示执行 setup。
+- `非法请求`、`non-ok status`、缺模板或凭证：仅说明 CLI 路线不可用并给出 setup 指引；不因此阻断已登录 Edge 的默认网页流程，不自动读取/输出凭证或要求先刷新。
 - 返回帖子少于 60：使用实际返回数量并在报告数据概览中说明，不伪造样本。
 
 ### Step 3: Connect the local browser
@@ -95,7 +108,7 @@ PYTHONUTF8=1 python -B "<repo>/xiaoheihe-cli/xhh.py" harvest --top 60 --topic 72
 
 ### Step 4: Read each post
 
-按元数据 JSON 中的 `posts` 顺序逐个导航到 `post.url`。不要并发打开 60 个 tab，避免触发站点风控。
+按本轮网页 DOM 去重样本顺序（仅显式 CLI 路线才使用 `posts` JSON）逐个导航到实际帖子 URL。全程复用自己的后台 tab，不并发打开大量 tab。
 
 每个帖子先等待正文容器出现，再提取：
 
@@ -111,8 +124,9 @@ JSON.stringify({
 
 处理规则：
 
-- 正文为空：使用 metadata 的 `preview`，并标记为图片型或正文未加载。
-- 评论为空：保留热度数字，不推断评论立场。
+- 上述选择器仅为已验证示例，必须确认当前 DOM；提取标题、正文、可见日期及已加载文本评论，记录排序与最多读取条数（示例上限 8 条）。按需滚动/展开可见评论，条件等待后记录实际范围。
+- 正文为空：只使用实际列表预览，标记“图片型/正文未加载/不可读”，不把预览当完整正文。图片可现场查看但不伪造 OCR；图片评论、折叠楼中楼和未加载评论标记未读取。
+- 评论为空：保留可见热度数字，不推断评论立场。
 - 页面提示登录且正文无法取得：停止并请求在所选本机浏览器登录。
 - 页面尚未渲染：按条件等待选择器后重试一次，不用固定 sleep 作为唯一依据。
 
@@ -195,7 +209,7 @@ JSON.stringify({
 
 ## Stop conditions
 
-- `harvest` 凭证失效或缺失：停止并给出 setup 指引。
+- CLI 凭证失效或缺失：只停止显式 CLI 路线；默认已登录 Edge UI/DOM 路线不受其阻断。
 - 浏览器登录态不足：停止并请求登录所选本机浏览器。
 - 实际帖子数不足：继续处理实际样本并降低结论置信度。
 - 单帖正文为空：回退到 preview，不停止全局流程。
@@ -203,7 +217,7 @@ JSON.stringify({
 
 ## Verification
 
-1. `harvest` JSON 可解析，`count` 与 `posts.length` 一致。
+1. 默认路线核实 Edge 官网目标板块、实际排序、去重样本数、滚动收敛/停止原因、开始/结束时间与正文/评论读取范围；显式 CLI 路线另核实 JSON `count` 与 `posts.length` 一致。
 2. 报告中的 linkid、热度数字、引文和结论均可追溯。
 3. 计算中文字符数，确认不少于 10000。
 4. 确认保存文件存在且未覆盖旧报告。

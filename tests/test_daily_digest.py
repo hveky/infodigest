@@ -114,7 +114,7 @@ class DigestTests(unittest.TestCase):
                 r"\s+",
                 "",
                 "".join(
-                    p.get_text(clip=fitz.Rect(0, 0, p.rect.width, p.rect.height - 35))
+                    p.get_text(clip=fitz.Rect(0, 50, p.rect.width, p.rect.height - 45))
                     for p in full_doc
                 ),
             )
@@ -151,8 +151,71 @@ class DigestTests(unittest.TestCase):
                         0, page.rect.height - 35, page.rect.width, page.rect.height
                     )
                 ).strip()
-                self.assertEqual(footer, str(index + 1))
+                self.assertEqual(footer.splitlines()[-1], str(index + 1))
                 self.assertAlmostEqual(page.rect.width, 595.28, delta=1)
+
+    def test_editorial_styles_links_glyphs_and_running_sources(self):
+        parser = builder.TextBlocks()
+        parser.feed(
+            '<h1>一</h1><h2>二</h2><h3>三</h3><blockquote><p>引用</p></blockquote><p>[<a href="https://example.invalid/full-target">短标签</a>]</p><pre>  exact  spaces</pre>'
+        )
+        parser.flush()
+        self.assertEqual(
+            [kind for _, kind in parser.blocks],
+            ["h1", "h2", "h3", "quote", "body", "code"],
+        )
+        link_text = parser.blocks[4][0]
+        self.assertEqual(link_text.count("https://example.invalid/full-target"), 1)
+        self.assertIn("短标签</link>]", link_text)
+        from reportlab.pdfbase import pdfmetrics
+
+        head = pdfmetrics.getFont("DigestChinese")
+        body = pdfmetrics.getFont("DigestBody")
+        for font in (head, body):
+            self.assertTrue(
+                all(ord(c) in font.face.charToGlyph for c in "中文信息聚合日报")
+            )
+        if (FONT.parent / "simsun.ttc").exists():
+            self.assertNotEqual(head.face.name, body.face.name)
+        with fitz.open(self.pdf) as doc:
+            for _, title, page in doc.get_toc():
+                header = doc[page - 1].get_text(
+                    clip=fitz.Rect(0, 0, doc[page - 1].rect.width, 50)
+                )
+                self.assertIn(title, header)
+            for page in doc:
+                for block in page.get_text("dict")["blocks"]:
+                    for line in block.get("lines", []):
+                        for span in line["spans"]:
+                            x0, y0, x1, y1 = span["bbox"]
+                            self.assertGreaterEqual(x0, 0)
+                            self.assertLessEqual(x1, page.rect.width + 1)
+                            self.assertGreaterEqual(y0, 0)
+                            self.assertLessEqual(y1, page.rect.height + 1)
+        with patch.object(builder, "TTFont", side_effect=ValueError("missing glyph")):
+            with self.assertRaisesRegex(ValueError, "missing glyph"):
+                builder.register_fonts(FONT, [])
+        builder.register_fonts(FONT, [])
+
+    def test_visible_unicode_glyph_gate_ignores_nonrendered_content(self):
+        for missing in ("𠮷", "✅"):
+            with self.assertRaisesRegex(ValueError, "visible glyphs"):
+                builder.register_fonts(FONT, [{"text": "# " + missing}])
+        builder.register_fonts(
+            FONT,
+            [
+                {
+                    "text": "# 可见中文\n\n[标签](https://example.invalid/𠮷)\n\n<script>𠮷✅</script>\n\n<!-- 𠮷✅ -->"
+                }
+            ],
+        )
+        with tempfile.TemporaryDirectory() as name:
+            paths = fixtures(Path(name))
+            pdf = builder.build(DATE, paths, Path(name) / "out", FONT)
+            self.assertIn(
+                "linuxdo末段标记",
+                "".join(p.extract_text() for p in PdfReader(pdf).pages),
+            )
 
     def test_no_clobber_resume_hashes_deterministic(self):
         before = self.pdf.read_bytes()
